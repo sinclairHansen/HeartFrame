@@ -1,0 +1,7 @@
+numpy>=1.24,<3
+pandas>=2,<3
+matplotlib>=3.7,<4
+nibabel>=5,<6
+plotly>=5.18,<7
+scikit-image>=0.22,<1
+streamlit>=1.40,<2
