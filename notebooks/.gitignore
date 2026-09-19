@@ -1,0 +1,24 @@
+# Dataset and downloaded archives
+data/
+*.nii
+*.nii.gz
+*.zip
+
+# Python and notebooks
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.venv/
+venv/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+.streamlit/secrets.toml
+.DS_Store
+
+# Large model files
+*.pt
+*.pth
+*.ckpt
