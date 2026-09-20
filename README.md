@@ -2,9 +2,9 @@
 
 Explore cardiac MRI slices, expert and U-Net segmentations, interactive 3D ventricular anatomy, and measurements of cardiac function in a local browser app.
 
-**MRI â†’ segmentation â†’ 3D reconstruction â†’ ventricular measurements â†’ expert/model comparison**
+**MRI | segmentation | 3D reconstruction | ventricular measurements | expert/model comparison**
 
-HeartFrame is a research and education prototype, not a clinical diagnostic system. It reconstructs the labeled ventricular cavities and myocardium, not the entire heart. Some app labels may still use the project's earlier name, Heart in Motion.
+HeartFrame is a research and education prototype, not a clinical diagnostic system. It reconstructs the labeled ventricular cavities and myocardium, not the entire heart.
 
 ## Choose your setup
 
