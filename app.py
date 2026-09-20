@@ -457,13 +457,32 @@ def main():
                 return
             available = [p for p in folders if all(f.is_file() for f in prediction_files(p, predictions_root))]
             st.sidebar.caption(f'Model results available for {len(available)} of {len(folders)} patients.')
-            if only_predicted:
-                folders = available
-            if not folders:
+            # Keep the patient independently of source/filter widget identities.
+            selection_key = f'selected_patient::{data_dir.resolve()}'
+            widget_key = f'patient_picker::{data_dir.resolve()}'
+            all_folders = {p.name: p for p in folders}
+            previous = st.session_state.get(selection_key)
+            choices = [p.name for p in (available if only_predicted else folders)]
+            pinned = previous in all_folders and previous not in choices
+            if pinned:
+                # Preserve the current patient even when a source-specific filter hides it.
+                choices = sorted([*choices, previous])
+            if not choices:
                 st.info('No model results found. Check Data settings or turn off the prediction filter to explore expert segmentations.')
                 return
-            folder = st.sidebar.selectbox('Patient', folders, format_func=lambda p: p.name,
-                                          key=f'patient_{split}_{source}_{only_predicted}')
+            if previous not in choices:
+                previous = choices[0]
+            st.session_state[selection_key] = previous
+            st.session_state[widget_key] = previous
+
+            def remember_patient():
+                st.session_state[selection_key] = st.session_state[widget_key]
+
+            patient_id = st.sidebar.selectbox('Patient', choices, key=widget_key,
+                                               on_change=remember_patient)
+            folder = all_folders[patient_id]
+            if pinned:
+                st.sidebar.caption('Keeping your selected patient; model results are unavailable for this case.')
             info = read_patient_info(folder)
             code = info.get('Group', '').strip()
             st.caption(f'{folder.name} | {GROUPS.get(code, code)} | {source}')
