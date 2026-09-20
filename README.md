@@ -1,4 +1,4 @@
-# Heart in Motion
+# HeartFrame
 
 Interactive cardiac MRI exploration built from the ACDC notebooks in this repository. Explore a patient's original MRI, expert segmentation, physical 3D surfaces, and LV/RV measurements. Compare the notebook's saved Normal/DCM/HCM representatives at a common physical scale.
 
