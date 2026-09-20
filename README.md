@@ -26,7 +26,7 @@ git clone https://github.com/sinclairHansen/HeartFrame.git
 cd HeartFrame
 ```
 
-Alternatively, choose **Code â†’ Download ZIP** on GitHub, extract it, and open a terminal in the extracted folder containing `app.py` and `requirements.txt`.
+Alternatively, choose **Code Download ZIP** on GitHub, extract it, and open a terminal in the extracted folder containing `app.py` and `requirements.txt`.
 
 The project was developed on macOS. Instructions below also cover Windows and Linux, but those platforms have not been verified end to end. App viewing needs no GPU. Model training benefits from a supported GPU and can be slow on CPU; no fixed training time is guaranteed.
 
@@ -107,15 +107,15 @@ Open the local URL printed in the terminal, normally [http://localhost:8501](htt
 
 For your first run without predictions:
 
-1. Select **View â†’ Explore**.
-2. Select **Dataset â†’ Training (includes validation)**. The app initially defaults to Testing, so change this if you downloaded only training data.
-3. Select **Segmentation â†’ Expert**.
+1. Select **View Explore**.
+2. Select **Dataset’ Training (includes validation)**. The app initially defaults to Testing, so change this if you downloaded only training data.
+3. Select **Segmentation Expert**.
 4. Leave **Only patients with both predictions** unchecked.
 5. Select a patient, move through slices, rotate the 3D view, and switch ED/ES.
 
 Metric cards summarize both phases together; EF should not change when you change the displayed phase.
 
-**Compare** always uses training patients and expert masks. The included representative CSV selects `patient068`, `patient008`, and `patient023`. Those patient folders must be available. You do not need to rerun notebooks 0â€“3 to use the app when the data and included CSV are present.
+**Compare** always uses training patients and expert masks. The included representative CSV selects `patient068`, `patient008`, and `patient023`. Those patient folders must be available. You do not need to rerun notebooks to use the app when the data and included CSV are present.
 
 ## 5. Optional: generate U-Net predictions with NB4
 
@@ -185,7 +185,7 @@ In **Explore**, set **U-Net run folder** to the timestamped run directory itself
 | Testing | `data/testing` | `test/predictions` |
 | Training | `data/training` | `validation/predictions` |
 
-Choose **Segmentation â†’ U-Net**. The patient filter can limit the list to cases with both ED and ES predictions. A prediction filename must match the MRI frame, replacing `.nii.gz` with `_pred.nii.gz`, and live in a matching patient folder.
+Choose **Segmentation U-Net**. The patient filter can limit the list to cases with both ED and ES predictions. A prediction filename must match the MRI frame, replacing `.nii.gz` with `_pred.nii.gz`, and live in a matching patient folder.
 
 The app updates the MRI overlay, meshes, and metrics together and displays expert/model differences and Dice. EF differences are **percentage points**. Missing predictions are not replaced with expert masks. If files were regenerated while the app was open, click **Reload data**.
 
@@ -200,42 +200,6 @@ The viewer needs only saved predictions, not `best_unet.pt` or PyTorch. There is
 | No paired predictions | Check the run folder, selected dataset, and both ED/ES prediction filenames. Disable the prediction filter and choose Expert to explore without a model. |
 | NB4 cannot find the project | Open the notebook from the repository or its `notebooks` folder, with `data/training` present, or edit its path configuration. |
 | Geometry mismatch | Use NB4's native-grid exported masks and their matching source MRI. Do not manually resize or rename unrelated predictions. |
-| Units unspecified | The app assumes millimeters for ACDC files with unknown units. Verify geometry before using unrelated data; the assumption affects absolute volumes. |
-| Compare fails | Confirm the representative CSV and its three training patient folders are present. |
-| Training runs out of memory | Reduce `BATCH_SIZE` to 4 or 2 before creating loaders/training. Changing image size also changes preprocessing and requires a consistent new run. |
-| Port 8501 is occupied | Run `python -m streamlit run app.py --server.port 8502` and open the URL it prints. |
-| `conda` or `git` is not recognized | Install the relevant tool and reopen the terminal; on Windows, use a Conda-enabled prompt if needed. ZIP download and venv are alternatives. |
-
-## Implementation and limitations
-
-- Tools: Python, NiBabel, NumPy, pandas, Matplotlib, scikit-image, Plotly, Streamlit, and optional PyTorch.
-- Labels: 0 background, 1 RV cavity, 2 myocardium, 3 LV cavity.
-- Volumes use native mask voxel counts times voxel volume, converted from cubic millimeters to mL. `SV = EDV - ESV`; `EF = 100 * SV / EDV`.
-- Meshes use the NIfTI affine. Surface padding affects rendering only, not voxel-count measurements. Different patients are not anatomically registered.
-- The 2D U-Net processes slices independently. Predicted scores are restored to native dimensions before choosing labels and calculating measurements.
-- ED/ES are phases within a heartbeat, not longitudinal treatment visits. The app does not display a validated continuous 3D heartbeat or diagnose disease.
-- ACDC group labels partly depend on the measurements being shown; phenotype comparisons are illustrative, not independent diagnostic discoveries.
-- Validation guides checkpoint selection. Report final test results separately. Dice is overlap, not percentage classification accuracy, and good overlap does not guarantee accurate EF.
-
-## Keep large files out of Git
-
-Add these patterns to your root `.gitignore` before staging data or training outputs:
-
-```gitignore
-data/
-*.nii
-*.nii.gz
-*.pt
-*.pth
-*.ckpt
-outputs/unet/
-.venv/
-__pycache__/
-.ipynb_checkpoints/
-.DS_Store
-```
-
-Git ignore rules do not remove already tracked files. Commit code and selected small result summaries separately from raw MRI data, masks, and checkpoints. Manually uploading files through GitHub does not apply your local ignore rules.
 
 ## Acknowledgments and dataset terms
 
