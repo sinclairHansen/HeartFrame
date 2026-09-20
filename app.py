@@ -86,8 +86,12 @@ def build_meshes(phases):
         for name, (label, color) in STRUCTURES.items():
             mask = volume['mask'] == label
             if mask.any():
-                vertices, faces, _, _ = marching_cubes(np.pad(mask, 1).astype(np.uint8), 0.5)
-                vertices = nib.affines.apply_affine(volume['affine'], vertices - 1)
+                # Match NB1: header spacing defines physical dimensions in MRI voxel axes.
+                # Do not apply the affine afterward: that would introduce another scale.
+                spacing = np.asarray(volume['spacing'], dtype=float)
+                vertices, faces, _, _ = marching_cubes(
+                    np.pad(mask, 1).astype(np.uint8), 0.5, spacing=tuple(spacing))
+                vertices = vertices - spacing  # Undo the one-voxel padding in physical units.
                 result[phase][name] = (vertices, faces, color)
     return result
 
@@ -143,13 +147,104 @@ def trace(mesh, name):
     v, f, color = mesh
     return go.Mesh3d(x=v[:, 0], y=v[:, 1], z=v[:, 2],
                      i=f[:, 0], j=f[:, 1], k=f[:, 2], color=color,
-                     name=name, opacity=0.45 if name == 'Myocardium' else 0.9,
+                     name=name, opacity=0.30 if name == 'Myocardium' else 1.0,
+                     flatshading=False, lighting=dict(ambient=0.45, diffuse=0.8, specular=0.25, roughness=0.6),
                      hoverinfo='name', showlegend=True)
 
 
-def scene(extent):
+CAMERAS = {
+    'Oblique': dict(x=1.35, y=1.35, z=0.95),
+    'Along Y': dict(x=0, y=-2.0, z=0.1),
+    'Along X': dict(x=2.0, y=0, z=0.1),
+    'Along Z': dict(x=0.01, y=0.01, z=2.0),
+}
+
+
+def scene(extent, angle='Oblique', zoom=1.0):
+    eye = {k: v / zoom for k, v in CAMERAS[angle].items()}
     return dict(**{f'{a}axis': dict(range=[-extent, extent], visible=False) for a in 'xyz'},
-                aspectmode='cube', camera=dict(eye=dict(x=1.4, y=1.4, z=1.1)))
+                aspectmode='cube', bgcolor='#0e1827',
+                camera=dict(eye=eye, projection=dict(type='orthographic')))
+
+
+def focus_meshes(meshes_by_phase, selected, framing=None):
+    """One translation for both phases/all selected structures; never scale vertices."""
+    framing = [meshes_by_phase] if framing is None else framing
+    points = [mesh[0] for group in framing for phase in group.values()
+              for name, mesh in phase.items() if name in selected]
+    if not points:
+        return {phase: {} for phase in meshes_by_phase}, 50.0
+    points = np.vstack(points)
+    center = (points.min(0) + points.max(0)) / 2
+    radius = max(1.0, float(np.max(np.abs(points-center))) * 1.08)
+    result = {phase: {name: (mesh[0]-center, mesh[1], mesh[2])
+                      for name, mesh in items.items() if name in selected}
+              for phase, items in meshes_by_phase.items()}
+    return result, radius
+
+
+def view_controls(prefix):
+    with st.expander('View controls'):
+        a, b, c = st.columns(3)
+        angle = a.selectbox('View angle', list(CAMERAS), key=f'{prefix}_angle')
+        zoom = b.slider('Zoom', 0.8, 1.8, 1.0, 0.1, key=f'{prefix}_zoom')
+        height = c.slider('Viewer height', 480, 960, 680, 40, key=f'{prefix}_height')
+        if st.button('Reset rotations', key=f'{prefix}_reset'):
+            st.session_state[f'{prefix}_revision'] = st.session_state.get(f'{prefix}_revision', 0) + 1
+    revision = f'{angle}_{zoom}_{st.session_state.get(f"{prefix}_revision", 0)}'
+    return angle, zoom, height, revision
+
+
+def style_figure(fig, extent, angle, zoom, height, revision):
+    fig.update_scenes(**scene(extent, angle, zoom))
+    fig.update_layout(height=height, autosize=True, paper_bgcolor='#0e1827',
+                      font=dict(color='#e7edf5', size=14), showlegend=False,
+                      margin=dict(l=8, r=8, t=60, b=8), uirevision=revision)
+    fig.update_annotations(font=dict(color='#e7edf5', size=17))
+    return fig
+
+
+def phase_trace(mesh, name, phase, overlay=False):
+    result = trace(mesh, name)
+    result.update(name=f'{name} · {phase}')
+    if overlay:
+        result.update(color='#80c9ed' if phase == 'ED' else '#ff7890',
+                      opacity=0.16 if phase == 'ED' else 1.0)
+    return result
+
+
+def contraction_figure(items, selected, mode, extent, angle, zoom, height, revision):
+    """items = [(display title, shared-coordinate ED/ES meshes), ...]."""
+    both = mode == 'Side by side'
+    rows, cols = (2, len(items)) if both and len(items) > 1 else (1, 2 if both else len(items))
+    if both and len(items) == 1:
+        titles = ['End diastole · Filled', 'End systole · Contracted']
+    elif both:
+        titles = [f'{title} · {phase}' for phase in ('ED', 'ES') for title, _ in items]
+    else:
+        titles = [title for title, _ in items]
+    fig = make_subplots(rows=rows, cols=cols,
+                        specs=[[{'type': 'scene'} for _ in range(cols)] for _ in range(rows)],
+                        subplot_titles=titles, horizontal_spacing=0.015, vertical_spacing=0.06)
+    for col, (_, data) in enumerate(items, 1):
+        phases = ('ED', 'ES') if mode in ('Side by side', 'Contraction overlay') else (('ED',) if mode == 'Filled (ED)' else ('ES',))
+        for phase in phases:
+            if both:
+                r, c = ((1, 1 if phase == 'ED' else 2) if len(items) == 1
+                        else (1 if phase == 'ED' else 2, col))
+            else:
+                r, c = 1, col
+            for name in selected:
+                if name in data[phase]:
+                    fig.add_trace(phase_trace(data[phase][name], name, phase,
+                                             overlay=(mode == 'Contraction overlay')), row=r, col=c)
+    return style_figure(fig, extent, angle, zoom, height*(1.7 if rows == 2 else 1), revision)
+
+
+def show_figure(fig, key):
+    st.plotly_chart(fig, use_container_width=True, key=key,
+                    config={'displaylogo': False, 'scrollZoom': True,
+                            'toImageButtonOptions': {'format': 'png', 'scale': 2}})
 
 
 def draw_slice(image, mask, z, spacing, overlay):
@@ -168,44 +263,84 @@ def draw_slice(image, mask, z, spacing, overlay):
 
 
 def explore(folder, source='Expert', predictions_root='', split='training'):
-    info, phases = load_patient(str(folder), source, predictions_root)
-    st.subheader('Cardiac function')
-    phase = st.radio('Cardiac phase', ['ED', 'ES'], horizontal=True,
-                     format_func=lambda p: 'ED | Filled' if p == 'ED' else 'ES | Contracted')
-    volume = phases[phase]
+    _, phases = load_patient(str(folder), source, predictions_root)
     table = metrics(phases)
+    st.subheader('See the contraction')
+    selected = st.multiselect('3D structures', list(STRUCTURES), default=['LV cavity'],
+                              help='Start with the LV cavity to compare filling and contraction.')
+    mode = st.radio('3D display', ['Side by side', 'Contraction overlay', 'Filled (ED)', 'Contracted (ES)'],
+                    horizontal=True)
+    angle, zoom, height, revision = view_controls('explore')
+    all_meshes, _ = meshes(str(folder), source, predictions_root)
+    framing = [all_meshes]
+    if predictions_root and all(f.is_file() for f in prediction_files(folder, predictions_root)):
+        try:
+            other, _ = meshes(str(folder), 'Expert' if source == 'U-Net' else 'U-Net', predictions_root)
+            framing.append(other)
+        except (OSError, ValueError):
+            pass
+    focused, extent = focus_meshes(all_meshes, selected, framing)
+    if not selected:
+        st.info('Select a structure to view its 3D anatomy.')
+    else:
+        for phase in ('ED', 'ES'):
+            missing = [name for name in selected if name not in focused[phase]]
+            if missing:
+                st.warning(f'{phase}: missing ' + ', '.join(missing))
+        fig = contraction_figure([(folder.name, focused)], selected, mode, extent,
+                                  angle, zoom, height, f'{folder.name}_{selected}_{revision}')
+        show_figure(fig, 'explore_anatomy')
+        if mode == 'Contraction overlay':
+            st.caption('Blue translucent shell: filled (ED) · Pink: contracted (ES). Two measured phases, shown together.')
+        else:
+            st.caption('Drag to rotate · Scroll to zoom · Expand the chart for fullscreen. Both phases share one physical scale.')
+    with st.expander('Geometry details'):
+        st.caption('Models use MRI voxel axes scaled by header spacing, matching NB1. '
+                   'They are not displayed in scanner-world orientation.')
+        details = []
+        for phase_name, data in phases.items():
+            header_spacing = np.asarray(data['spacing'])
+            affine_spacing = np.linalg.norm(data['affine'][:3, :3], axis=0)
+            label_mask = data['mask'] == 3
+            indices = np.argwhere(label_mask)
+            dimensions = ((indices.max(0) - indices.min(0) + 1) * header_spacing
+                          if len(indices) else np.zeros(3))
+            details.append({'Phase': phase_name,
+                            'Header spacing (mm)': ', '.join(f'{v:.3f}' for v in header_spacing),
+                            'Affine axis lengths': ', '.join(f'{v:.3f}' for v in affine_spacing),
+                            'LV bounding size (mm)': ' × '.join(f'{v:.1f}' for v in dimensions)})
+            if not np.allclose(header_spacing, affine_spacing, rtol=1e-3, atol=1e-4):
+                st.warning(f'{phase_name}: header spacing and affine axis lengths differ. '
+                           'Display and volume calculations both use header spacing; verify the source geometry before interpreting absolute dimensions.')
+        st.dataframe(pd.DataFrame(details), hide_index=True)
+    st.subheader('Cardiac function')
     for name, row in table.iterrows():
-        st.markdown(f'**{name} function**')
+        st.markdown(f'**{name}**')
         for col, (label, value) in zip(st.columns(4), row.items()):
             col.metric(label, f'{value:.1f}' if np.isfinite(value) else 'Unavailable')
         if row['EDV (mL)'] <= 0 or row['ESV (mL)'] <= 0 or row['SV (mL)'] < 0:
             st.warning(f'{name}: missing or unusual chamber volumes. Review the selected masks.')
     with st.expander('About these measurements'):
-        st.write('EDV: end-diastolic volume · ESV: end-systolic volume · '
-                 'SV: stroke volume · EF: ejection fraction.')
-        st.caption('Measurements summarize both phases. The phase selector changes the displayed anatomy.')
+        st.write('EDV: end-diastolic volume · ESV: end-systolic volume · SV: stroke volume · EF: ejection fraction.')
+        st.caption('Measurements summarize both phases. The display controls change the anatomy shown, not the measurements.')
         if any(v['units'] == 'unknown' for v in phases.values()):
             st.caption('ACDC spatial units are interpreted as millimeters where the image header does not specify units.')
-    left, right = st.columns([1, 1.5])
-    with left:
-        st.subheader('MRI slices')
-        count = volume['image'].shape[2]
-        z = st.slider('MRI slice', 1, count, (count+1)//2, key=f'slice_{folder.name}_{phase}')-1 if count > 1 else 0
+
+    # MRI has its own full-width section, rather than competing with the 3D viewer.
+    st.subheader('Inspect the MRI')
+    phase = st.radio('MRI phase', ['ED', 'ES'], horizontal=True)
+    volume = phases[phase]
+    count = volume['image'].shape[2]
+    controls, image_column = st.columns([1, 3])
+    with controls:
+        z = st.slider('MRI slice', 1, count, (count+1)//2,
+                      key=f'slice_{folder.name}_{phase}')-1 if count > 1 else 0
         overlay = st.checkbox('Show segmentation overlay', value=True)
+        st.caption(f"Frame {volume['frame']} · {source}")
+        st.caption('Blue: RV · Gold: myocardium · Pink: LV')
+    with image_column:
         draw_slice(volume['image'], volume['mask'], z, volume['spacing'], overlay)
-        st.caption(f"Frame {volume['frame']} | Blue: RV | Gold: myocardium | Pink: LV")
-    with right:
-        st.subheader('3D anatomy')
-        selected = st.multiselect('3D structures', list(STRUCTURES), default=list(STRUCTURES))
-        all_meshes, extent = meshes(str(folder), source, predictions_root)
-        missing = [name for name in selected if name not in all_meshes[phase]]
-        if missing:
-            st.warning('Missing in this mask: ' + ', '.join(missing))
-        fig = go.Figure([trace(all_meshes[phase][name], name) for name in selected if name in all_meshes[phase]])
-        fig.update_layout(scene=scene(extent), height=520, margin=dict(l=0, r=0, t=0, b=0),
-                          uirevision=folder.name, legend=dict(orientation='h'))
-        st.plotly_chart(fig, use_container_width=True)
-        st.caption('Physical scale preserved across phases and available segmentation sources.')
+
     export = table.reset_index()
     export.insert(0, 'Patient', folder.name)
     export['Source'] = source
@@ -237,31 +372,58 @@ def compare(data_dir):
     for _, row in representatives.iterrows():
         folder = data_dir / row['Patient']
         _, phases = load_patient(str(folder))
-        mesh, extent = meshes(str(folder))
+        raw_mesh, _ = meshes(str(folder))
+        # Tight framing uses only the displayed LV, with one center for ED and ES.
+        mesh, extent = focus_meshes(raw_mesh, ['LV cavity'])
         prepared.append((row, mesh, extent))
         records.append({'Group': row['Group'], 'Patient': row['Patient'], **metrics(phases).loc['LV'].to_dict()})
     if not prepared:
         st.info('No representative patients in the CSV.')
         return
-    n = len(prepared)
-    titles = [f"{row['Group']} | {phase}<br>{row['Patient']}" for phase in ('ED', 'ES') for row, _, _ in prepared]
-    fig = make_subplots(rows=2, cols=n, specs=[[{'type':'scene'} for _ in range(n)] for _ in range(2)], subplot_titles=titles)
-    for col, (_, mesh, _) in enumerate(prepared, 1):
-        for r, phase in enumerate(('ED', 'ES'), 1):
-            if 'LV cavity' in mesh[phase]:
-                fig.add_trace(trace(mesh[phase]['LV cavity'], 'LV cavity'), row=r, col=col)
-    fig.update_scenes(**scene(max(item[2] for item in prepared)))
-    fig.update_layout(height=760, showlegend=False, margin=dict(l=0, r=0, t=65, b=0))
-    st.plotly_chart(fig, use_container_width=True)
-    st.dataframe(pd.DataFrame(records).round(2), hide_index=True)
-    with st.expander('About this comparison'):
+    summary = pd.DataFrame(records)
+    mode = st.radio('Comparison display',
+                    ['Contraction overlay', 'Filled (ED)', 'Contracted (ES)', 'Side by side'], horizontal=True)
+    focus = st.selectbox('Focus', ['All phenotypes'] + summary['Group'].tolist(),
+                         help='Choose one phenotype for a larger two-phase inspection.')
+    angle, zoom, height, revision = view_controls('compare')
+    extent = max(item[2] for item in prepared)
+    chosen = prepared if focus == 'All phenotypes' else [item for item in prepared if item[0]['Group'] == focus]
+    for column, (row, _, _) in zip(st.columns(len(chosen)), chosen):
+        values = summary[summary['Patient'] == row['Patient']].iloc[0]
+        with column:
+            st.markdown(f"**{row['Group']}**")
+            st.metric('LV ejection fraction', f"{values['EF (%)']:.1f}%")
+            st.caption(f"{values['EDV (mL)']:.1f} mL filled → {values['ESV (mL)']:.1f} mL contracted")
+    fig = contraction_figure([(row['Group'], mesh) for row, mesh, _ in chosen], ['LV cavity'],
+                              mode, extent, angle, zoom, height, f'{focus}_{mode}_{revision}')
+    show_figure(fig, 'phenotype_anatomy')
+    if mode == 'Contraction overlay':
+        st.caption('Blue translucent shell: ED · Pink: ES. All phenotypes share the same physical scale.')
+    else:
+        st.caption('Shared physical scale and starting view across all phenotypes and phases.')
+    st.caption('Use View angle or Reset rotations to restore matching views after rotating individual panels.')
+    # Connect visual contraction with the actual measured volume change.
+    chart = go.Figure()
+    for phase, field, color in [('Filled (ED)', 'EDV (mL)', '#80c9ed'),
+                                ('Contracted (ES)', 'ESV (mL)', '#ff7890')]:
+        chart.add_bar(name=phase, x=summary['Group'], y=summary[field], marker_color=color,
+                      hovertemplate='%{x}<br>%{y:.1f} mL<extra>%{fullData.name}</extra>')
+    chart.update_layout(title='Ventricular volume: filling to contraction', barmode='group',
+                         yaxis_title='LV volume (mL)', height=340, margin=dict(t=55, b=20),
+                         legend=dict(orientation='h', y=1.13))
+    st.plotly_chart(chart, use_container_width=True, config={'displaylogo': False})
+    with st.expander('Patient measurements and selection'):
+        st.dataframe(summary.round(2), hide_index=True)
         st.write('Each case is closest to its group median left ventricular ejection fraction. '
-                 'All models share a physical scale.')
-        st.caption('Groups are ACDC reference labels. These examples illustrate dataset phenotypes.')
+                 'A single translation is applied to both phases; no heart is independently resized.')
+        st.caption('Groups are ACDC reference labels. These are representative examples, not universal disease appearances. '
+                   'The cavity view does not show myocardial wall thickness.')
 
 
 def main():
     st.set_page_config(page_title='HeartFrame', page_icon=':heart:', layout='wide')
+    st.markdown('<style>.block-container {padding-top: 1.4rem; padding-bottom: 2rem;}</style>',
+                unsafe_allow_html=True)
     st.title('HeartFrame')
     st.write('From cardiac MRI to 3D anatomy and function.')
     st.sidebar.title('HeartFrame')
