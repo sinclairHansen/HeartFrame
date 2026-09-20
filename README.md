@@ -1,37 +1,248 @@
 # HeartFrame
 
-Interactive cardiac MRI exploration built from the ACDC notebooks in this repository. Explore a patient's original MRI, expert segmentation, physical 3D surfaces, and LV/RV measurements. Compare the notebook's saved Normal/DCM/HCM representatives at a common physical scale.
+Explore cardiac MRI slices, expert and U-Net segmentations, interactive 3D ventricular anatomy, and measurements of cardiac function in a local browser app.
 
-## Run locally
+**MRI â†’ segmentation â†’ 3D reconstruction â†’ ventricular measurements â†’ expert/model comparison**
 
-From this repository's root folder, using Python 3.11:
+HeartFrame is a research and education prototype, not a clinical diagnostic system. It reconstructs the labeled ventricular cavities and myocardium, not the entire heart. Some app labels may still use the project's earlier name, Heart in Motion.
+
+## Choose your setup
+
+| Goal | What you need |
+| --- | --- |
+| Explore MRI and expert segmentations | App dependencies and downloaded ACDC images/reference masks |
+| Compare the saved Normal/DCM/HCM examples | Training data and the included `outputs/representative_hearts.csv` |
+| View U-Net results in the app | Matching local MRI data and precomputed `_pred.nii.gz` masks |
+| Train a model and generate predictions | The above, PyTorch, a notebook environment, and NB4 |
+
+**No PyTorch installation or model training is required to run the app.** The app reads saved masks; it does not run live inference. Raw MRI data, model weights, and prediction files are not bundled in this repository. A fresh clone cannot show patient images until you download ACDC, and cannot show U-Net results until you generate or obtain compatible predictions.
+
+## 1. Get the code
+
+Install [Git](https://git-scm.com/downloads) and either [Miniconda](https://www.anaconda.com/docs/getting-started/miniconda/main) or Python 3.11. Then open a terminal:
 
 ```bash
+git clone https://github.com/sinclairHansen/hackMIT.git
+cd hackMIT
+```
+
+Alternatively, choose **Code â†’ Download ZIP** on GitHub, extract it, and open a terminal in the extracted folder containing `app.py` and `requirements.txt`.
+
+The project was developed on macOS. Instructions below also cover Windows and Linux, but those platforms have not been verified end to end. App viewing needs no GPU. Model training benefits from a supported GPU and can be slow on CPU; no fixed training time is guaranteed.
+
+## 2. Create an environment and install app dependencies
+
+Choose **one** environment method.
+
+### Option A: Conda (same workflow as development)
+
+```bash
+conda create -n heartmotion python=3.11 pip -y
 conda activate heartmotion
+python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
+```
+
+If `heartmotion` already exists, skip the create command. Use `python -m pip`, not bare `pip`, to install into the interpreter you are actually running.
+
+### Option B: Python venv
+
+On macOS/Linux, with Python 3.11 installed:
+
+```bash
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
+
+On Windows Command Prompt, with Python 3.11 installed:
+
+```bat
+py -3.11 -m venv .venv
+.venv\Scripts\activate.bat
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
+
+On Windows PowerShell, activate with `.\.venv\Scripts\Activate.ps1`. If local policy blocks activation, use Command Prompt or invoke `.\.venv\Scripts\python.exe` directly instead of changing system policy.
+
+Check the installation:
+
+```bash
+python -c "import sys, streamlit, nibabel, plotly, skimage; print(sys.executable); print('App imports OK')"
+```
+
+Dependencies are version ranges, not a locked environment. Exact versions can differ between installs.
+
+## 3. Download and place ACDC data
+
+1. Open the official [ACDC dataset page](https://www.creatis.insa-lyon.fr/Challenge/acdc/databases.html).
+2. Follow its download/access instructions and review the dataset terms. Download the **training images and reference masks**. Testing images and reference masks are also needed for final test evaluation and the Testing expert view.
+3. Extract the archives. Keep the individual `.nii.gz` files compressed; NiBabel reads them directly.
+4. Arrange the patient folders as shown below. If extraction creates an extra wrapper directory, move the `training` and `testing` folders into `data`.
+
+| Path relative to the repository | Contents |
+| --- | --- |
+| `data/training/patient001/Info.cfg` | ED/ES frame numbers and patient metadata |
+| `data/training/patient001/patient001_frame01.nii.gz` | Example phase MRI filename |
+| `data/training/patient001/patient001_frame01_gt.nii.gz` | Corresponding expert mask |
+| `data/training/patient001/...` | Other phase files, using their actual frame numbers |
+| `data/testing/patient101/Info.cfg` | Example testing patient metadata |
+| `data/testing/patient101/...` | Its MRI and reference masks |
+
+The filenames above illustrate the layout: **do not rename phases to frame01**. The app reads ED/ES frame numbers from `Info.cfg` and requires both phase images and the masks for the selected source. The `_4d.nii.gz` cine file is not needed by the current app.
+
+Data can live outside the repository. In the app, set **ACDC data folder** to the parent containing `training` and/or `testing`, not to an individual patient or to `training` itself. NB4 expects `data/training` beneath the project root unless you edit its configuration.
+
+## 4. Launch the app
+
+From the repository root with your environment active:
+
+```bash
 python -m streamlit run app.py
 ```
 
-Leave the terminal running. Streamlit opens the app in your browser.
+Open the local URL printed in the terminal, normally [http://localhost:8501](http://localhost:8501). Leave the terminal running. Stop the server with **Ctrl+C**. For subsequent sessions, activate the same environment, return to the project root, and run the command again.
 
-Obtain ACDC separately from https://www.creatis.insa-lyon.fr/Challenge/acdc/ and place its training folder at `data/training`. Each `patientXXX` folder should contain `Info.cfg`, ED/ES MRI files, and their `_gt.nii.gz` reference masks. You can choose another training folder in the sidebar. No data is uploaded by this app.
+For your first run without predictions:
 
-## Behavior
+1. Select **View â†’ Explore**.
+2. Select **Dataset â†’ Training (includes validation)**. The app initially defaults to Testing, so change this if you downloaded only training data.
+3. Select **Segmentation â†’ Expert**.
+4. Leave **Only patients with both predictions** unchecked.
+5. Select a patient, move through slices, rotate the 3D view, and switch ED/ES.
 
-- Uses ED/ES frame numbers from Info.cfg, never assumes frame01 is ED.
-- Computes volumes from native reference-mask voxel counts and spacing, independently at each phase. EF is 100 Ã— (EDV âˆ’ ESV) / EDV.
-- Uses the NIfTI affine for mesh coordinates; applies one shared translation across all structures and both phases. No anatomical registration across different patients is performed.
-- Surface padding closes edges for rendering only; metrics use original masks. Displayed surfaces are visual approximations.
-- Preserves the same 3D scale between phases and between comparison panels.
-- Compare reads `outputs/representative_hearts.csv`, exported by notebook 03, and recomputes displayed measurements from local masks. Representatives are closest to their group's median LVEF.
-- Missing/invalid geometry produces an error message. Missing or unusual chamber volumes produce review warnings. Use Reload data after replacing local files.
+Metric cards summarize both phases together; EF should not change when you change the displayed phase.
 
-Original notebooks are unchanged. Raw cine playback, automated segmentation, indexed metrics, and trial review are future additions. The app does not estimate treatment effects: ED/ES are phases of one heartbeat, not treatment visits. ACDC groups are supplied dataset labels, partly defined using cardiac measurements, not independently predicted diagnoses.
+**Compare** always uses training patients and expert masks. The included representative CSV selects `patient068`, `patient008`, and `patient023`. Those patient folders must be available. You do not need to rerun notebooks 0â€“3 to use the app when the data and included CSV are present.
 
-## Dataset attribution
+## 5. Optional: generate U-Net predictions with NB4
 
-ACDC data is governed by its own CC BY-NC-SA 4.0 and accompanying noncommercial scientific research terms. Do not treat repository code licensing as relicensing the data or third-party materials. Download and review the original dataset license before use; raw images and masks are excluded from Git.
+### Install training and notebook tools
 
-Required citation: O. Bernard, A. Lalande, C. Zotti, F. Cervenansky, et al. â€œDeep Learning Techniques for Automatic MRI Cardiac Multi-structures Segmentation and Diagnosis: Is the Problem Solved?â€ IEEE Transactions on Medical Imaging, 37(11), 2514â€“2525, 2018. https://doi.org/10.1109/TMI.2018.2837502
+With the same environment active:
 
-Research and education prototype, not a clinical diagnostic system.
+```bash
+python -m pip install "torch>=2.2" ipykernel jupyterlab
+python -m ipykernel install --user --name heartmotion --display-name "Python (heartmotion)"
+```
+
+For NVIDIA/CUDA acceleration or platform-specific installation issues, use the matching command from the [official PyTorch installer](https://pytorch.org/get-started/locally/) in this environment. Supported Apple Silicon systems can use MPS. NB4 selects CUDA, then MPS, then CPU based on availability.
+
+Open `notebooks/04_train_segmentation.ipynb` in VS Code with its Python and Jupyter extensions, and choose **Python (heartmotion)** as the notebook kernel. Alternatively:
+
+```bash
+python -m jupyterlab
+```
+
+Check the kernel before training:
+
+```python
+import sys
+import torch
+print(sys.executable)
+print(torch.__version__)
+print('CUDA:', torch.cuda.is_available())
+print('MPS:', torch.backends.mps.is_available())
+```
+
+### Run the notebook
+
+1. Run sections 1â€“6 to configure data, split patients, prepare slices, and define the network.
+2. Run section 7's overfit sanity check and inspect the alignment/predictions.
+3. Run section 8 to train. Defaults are 192 Ã— 192 inputs, batch size 8, and up to 30 epochs with early stopping. Reduce batch size if memory runs out. Prepared slices are cached in RAM.
+4. Run sections 9â€“12 to reload the best checkpoint, save validation predictions, compute errors, and inspect overlays/3D comparisons.
+5. Keep `RUN_FINAL_TEST = False` while developing the model. Once choices are frozen, set it to `True` in a new cell immediately before section 13, then run section 13 with testing images and masks available. **Do not rerun the entire notebook just to change this flag**, as that creates another run and may retrain the model.
+
+The full training dataset is split by patient and group into 80 training and 20 validation patients. Checkpoint selection uses validation loss. Final testing is separate; do not use it to tune the model and still describe it as untouched.
+
+Every configuration execution creates a new timestamped run under `outputs/unet/`. Use the run printed by your notebook, not necessarily the author's original timestamp.
+
+| Run output | Purpose |
+| --- | --- |
+| `best_unet.pt` | Selected model weights and configuration |
+| `config.json`, `patient_split.csv` | Settings and patient assignments |
+| `training_history.csv` | Epoch losses, monitoring Dice, and times |
+| `validation/predictions/<patient>/..._pred.nii.gz` | Native-grid validation masks |
+| `test/predictions/<patient>/..._pred.nii.gz` | Native-grid test masks, after section 13 |
+| `validation/` or `test/` CSV reports | Per-patient Dice, clinical errors, and review flags |
+
+A training interruption preserves the best checkpoint from completed epochs. Section 9 can load it by setting `CHECKPOINT_TO_LOAD`. Rerunning section 8 starts training from scratch; it is not optimizer-state resume. Exact reproduction of the author's model requires the same checkpoint; retraining can produce different results.
+
+## 6. View predictions in the app
+
+In **Explore**, set **U-Net run folder** to the timestamped run directory itself, for example:
+
+```text
+/your/project/hackMIT/outputs/unet/20260919_193223_583590
+```
+
+**Do not enter the `test/predictions` subfolder in this field.** The app adds the appropriate subpath:
+
+| Dataset selection | MRI folder | Prediction subfolder under the selected run |
+| --- | --- | --- |
+| Testing | `data/testing` | `test/predictions` |
+| Training | `data/training` | `validation/predictions` |
+
+Choose **Segmentation â†’ U-Net**. The patient filter can limit the list to cases with both ED and ES predictions. A prediction filename must match the MRI frame, replacing `.nii.gz` with `_pred.nii.gz`, and live in a matching patient folder.
+
+The app updates the MRI overlay, meshes, and metrics together and displays expert/model differences and Dice. EF differences are **percentage points**. Missing predictions are not replaced with expert masks. If files were regenerated while the app was open, click **Reload data**.
+
+The viewer needs only saved predictions, not `best_unet.pt` or PyTorch. There is currently no bundled pretrained checkpoint, one-click prediction download, or live-inference endpoint. Compatible masks must be generated locally or supplied separately under the applicable data terms.
+
+## Troubleshooting
+
+| Problem | What to check |
+| --- | --- |
+| `ModuleNotFoundError` after installing | Run `python -c "import sys; print(sys.executable)"` and `python -m pip --version`. In a notebook check `sys.executable`; select the right kernel. Install there with `%pip install torch`, then restart the kernel if necessary. |
+| No patients found | Check the ACDC data parent path, selected dataset, and extra extraction directories. A training-only download requires choosing Training. |
+| No paired predictions | Check the run folder, selected dataset, and both ED/ES prediction filenames. Disable the prediction filter and choose Expert to explore without a model. |
+| NB4 cannot find the project | Open the notebook from the repository or its `notebooks` folder, with `data/training` present, or edit its path configuration. |
+| Geometry mismatch | Use NB4's native-grid exported masks and their matching source MRI. Do not manually resize or rename unrelated predictions. |
+| Units unspecified | The app assumes millimeters for ACDC files with unknown units. Verify geometry before using unrelated data; the assumption affects absolute volumes. |
+| Compare fails | Confirm the representative CSV and its three training patient folders are present. |
+| Training runs out of memory | Reduce `BATCH_SIZE` to 4 or 2 before creating loaders/training. Changing image size also changes preprocessing and requires a consistent new run. |
+| Port 8501 is occupied | Run `python -m streamlit run app.py --server.port 8502` and open the URL it prints. |
+| `conda` or `git` is not recognized | Install the relevant tool and reopen the terminal; on Windows, use a Conda-enabled prompt if needed. ZIP download and venv are alternatives. |
+
+## Implementation and limitations
+
+- Tools: Python, NiBabel, NumPy, pandas, Matplotlib, scikit-image, Plotly, Streamlit, and optional PyTorch.
+- Labels: 0 background, 1 RV cavity, 2 myocardium, 3 LV cavity.
+- Volumes use native mask voxel counts times voxel volume, converted from cubic millimeters to mL. `SV = EDV - ESV`; `EF = 100 * SV / EDV`.
+- Meshes use the NIfTI affine. Surface padding affects rendering only, not voxel-count measurements. Different patients are not anatomically registered.
+- The 2D U-Net processes slices independently. Predicted scores are restored to native dimensions before choosing labels and calculating measurements.
+- ED/ES are phases within a heartbeat, not longitudinal treatment visits. The app does not display a validated continuous 3D heartbeat or diagnose disease.
+- ACDC group labels partly depend on the measurements being shown; phenotype comparisons are illustrative, not independent diagnostic discoveries.
+- Validation guides checkpoint selection. Report final test results separately. Dice is overlap, not percentage classification accuracy, and good overlap does not guarantee accurate EF.
+
+## Keep large files out of Git
+
+Add these patterns to your root `.gitignore` before staging data or training outputs:
+
+```gitignore
+data/
+*.nii
+*.nii.gz
+*.pt
+*.pth
+*.ckpt
+outputs/unet/
+.venv/
+__pycache__/
+.ipynb_checkpoints/
+.DS_Store
+```
+
+Git ignore rules do not remove already tracked files. Commit code and selected small result summaries separately from raw MRI data, masks, and checkpoints. Manually uploading files through GitHub does not apply your local ignore rules.
+
+## Acknowledgments and dataset terms
+
+Inspired by [Brainchop](https://github.com/neuroneural/brainchop)'s interactive MRI segmentation and visualization experience.
+
+ACDC data is supplied separately under its [dataset terms](https://www.creatis.insa-lyon.fr/Challenge/acdc/databases.html), including the accompanying CC BY-NC-SA 4.0 and noncommercial scientific research conditions. Consult the downloaded `LICENSE_TERMS.md` and `MANDATORY_CITATION.md`. Code licensing does not relicense the dataset or third-party materials.
+
+Required ACDC citation:
+
+O. Bernard, A. Lalande, C. Zotti, F. Cervenansky, et al. "Deep Learning Techniques for Automatic MRI Cardiac Multi-structures Segmentation and Diagnosis: Is the Problem Solved?" *IEEE Transactions on Medical Imaging*, 37(11), 2514â€“2525, 2018. [doi:10.1109/TMI.2018.2837502](https://doi.org/10.1109/TMI.2018.2837502).
