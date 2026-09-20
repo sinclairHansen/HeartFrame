@@ -22,8 +22,8 @@ HeartFrame is a research and education prototype, not a clinical diagnostic syst
 Install [Git](https://git-scm.com/downloads) and either [Miniconda](https://www.anaconda.com/docs/getting-started/miniconda/main) or Python 3.11. Then open a terminal:
 
 ```bash
-git clone https://github.com/sinclairHansen/hackMIT.git
-cd hackMIT
+git clone https://github.com/sinclairHansen/HeartFrame.git
+cd HeartFrame
 ```
 
 Alternatively, choose **Code â†’ Download ZIP** on GitHub, extract it, and open a terminal in the extracted folder containing `app.py` and `requirements.txt`.
@@ -37,8 +37,8 @@ Choose **one** environment method.
 ### Option A: Conda (same workflow as development)
 
 ```bash
-conda create -n heartmotion python=3.11 pip -y
-conda activate heartmotion
+conda create -n heartframe python=3.11 pip -y
+conda activate heartframe
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
@@ -125,7 +125,7 @@ With the same environment active:
 
 ```bash
 python -m pip install "torch>=2.2" ipykernel jupyterlab
-python -m ipykernel install --user --name heartmotion --display-name "Python (heartmotion)"
+python -m ipykernel install --user --name heartmotion --display-name "Python (heartframe)"
 ```
 
 For NVIDIA/CUDA acceleration or platform-specific installation issues, use the matching command from the [official PyTorch installer](https://pytorch.org/get-started/locally/) in this environment. Supported Apple Silicon systems can use MPS. NB4 selects CUDA, then MPS, then CPU based on availability.
@@ -175,7 +175,7 @@ A training interruption preserves the best checkpoint from completed epochs. Sec
 In **Explore**, set **U-Net run folder** to the timestamped run directory itself, for example:
 
 ```text
-/your/project/hackMIT/outputs/unet/20260919_193223_583590
+/your/project/HeartFrame/outputs/unet/20260919_193223_583590
 ```
 
 **Do not enter the `test/predictions` subfolder in this field.** The app adds the appropriate subpath:
