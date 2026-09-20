@@ -1,4 +1,4 @@
-"""Heart in Motion: local ACDC viewer built from notebooks 0-3."""
+"""HeartFrame: cardiac MRI segmentation, anatomy, and function."""
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -39,7 +39,7 @@ def load_patient(folder, source='Expert', predictions_root=''):
         else:
             mask_path = Path(f'{stem}_gt.nii.gz')
         if not mask_path.is_file():
-            raise FileNotFoundError(f'Missing {source} mask: {mask_path}. No substitute mask was used.')
+            raise FileNotFoundError(f'Missing {source} mask: {mask_path}.')
         mask_image = nib.load(mask_path)
         mask = mask_image.get_fdata()
         if image.shape != mask.shape or not np.allclose(image.affine, mask_image.affine):
@@ -169,9 +169,7 @@ def draw_slice(image, mask, z, spacing, overlay):
 
 def explore(folder, source='Expert', predictions_root='', split='training'):
     info, phases = load_patient(str(folder), source, predictions_root)
-    st.subheader(f'{source} measurements and anatomy')
-    if any(v['units'] == 'unknown' for v in phases.values()):
-        st.caption('Spatial units are unspecified in the MRI header; millimeters are assumed for ACDC.')
+    st.subheader('Cardiac function')
     phase = st.radio('Cardiac phase', ['ED', 'ES'], horizontal=True,
                      format_func=lambda p: 'ED | Filled' if p == 'ED' else 'ES | Contracted')
     volume = phases[phase]
@@ -182,15 +180,22 @@ def explore(folder, source='Expert', predictions_root='', split='training'):
             col.metric(label, f'{value:.1f}' if np.isfinite(value) else 'Unavailable')
         if row['EDV (mL)'] <= 0 or row['ESV (mL)'] <= 0 or row['SV (mL)'] < 0:
             st.warning(f'{name}: missing or unusual chamber volumes. Review the selected masks.')
-    st.caption('These measurements summarize ED and ES together; changing phase does not change EF.')
+    with st.expander('About these measurements'):
+        st.write('EDV: end-diastolic volume · ESV: end-systolic volume · '
+                 'SV: stroke volume · EF: ejection fraction.')
+        st.caption('Measurements summarize both phases. The phase selector changes the displayed anatomy.')
+        if any(v['units'] == 'unknown' for v in phases.values()):
+            st.caption('ACDC spatial units are interpreted as millimeters where the image header does not specify units.')
     left, right = st.columns([1, 1.5])
     with left:
+        st.subheader('MRI slices')
         count = volume['image'].shape[2]
         z = st.slider('MRI slice', 1, count, (count+1)//2, key=f'slice_{folder.name}_{phase}')-1 if count > 1 else 0
         overlay = st.checkbox('Show segmentation overlay', value=True)
         draw_slice(volume['image'], volume['mask'], z, volume['spacing'], overlay)
         st.caption(f"Frame {volume['frame']} | Blue: RV | Gold: myocardium | Pink: LV")
     with right:
+        st.subheader('3D anatomy')
         selected = st.multiselect('3D structures', list(STRUCTURES), default=list(STRUCTURES))
         all_meshes, extent = meshes(str(folder), source, predictions_root)
         missing = [name for name in selected if name not in all_meshes[phase]]
@@ -200,7 +205,7 @@ def explore(folder, source='Expert', predictions_root='', split='training'):
         fig.update_layout(scene=scene(extent), height=520, margin=dict(l=0, r=0, t=0, b=0),
                           uirevision=folder.name, legend=dict(orientation='h'))
         st.plotly_chart(fig, use_container_width=True)
-        st.caption(f'{source} surfaces in physical coordinates. ED/ES share the same scale. Valid paired sources also share framing.')
+        st.caption('Physical scale preserved across phases and available segmentation sources.')
     export = table.reset_index()
     export.insert(0, 'Patient', folder.name)
     export['Source'] = source
@@ -212,8 +217,8 @@ def explore(folder, source='Expert', predictions_root='', split='training'):
         try:
             _, reference = load_patient(str(folder), 'Expert')
             differences = comparison_table(reference, phases)
-            st.subheader('U-Net compared with expert masks')
-            st.caption('Signed differences are U-Net minus expert. EF differences are percentage points, not relative percent errors.')
+            st.subheader('Model performance')
+            st.caption('Differences: U-Net minus expert. EF differences are in percentage points.')
             st.dataframe(differences.round(3), hide_index=True)
             st.dataframe(dice_table(reference, phases).round(4), hide_index=True)
             st.download_button('Download expert/model comparison', differences.to_csv(index=False),
@@ -249,20 +254,28 @@ def compare(data_dir):
     fig.update_layout(height=760, showlegend=False, margin=dict(l=0, r=0, t=65, b=0))
     st.plotly_chart(fig, use_container_width=True)
     st.dataframe(pd.DataFrame(records).round(2), hide_index=True)
-    st.caption('Saved notebook-03 representatives: closest to group median LVEF. All views share a physical scale. Dataset groups are supplied labels, not model predictions.')
+    with st.expander('About this comparison'):
+        st.write('Each case is closest to its group median left ventricular ejection fraction. '
+                 'All models share a physical scale.')
+        st.caption('Groups are ACDC reference labels. These examples illustrate dataset phenotypes.')
 
 
 def main():
-    st.set_page_config(page_title='Heart in Motion', page_icon=':heart:', layout='wide')
-    st.title('Heart in Motion')
-    st.write('Explore cardiac MRI, ventricular anatomy, and function.')
-    data_root = Path(st.sidebar.text_input('ACDC data folder', str(ROOT / 'data'))).expanduser()
+    st.set_page_config(page_title='HeartFrame', page_icon=':heart:', layout='wide')
+    st.title('HeartFrame')
+    st.write('From cardiac MRI to 3D anatomy and function.')
+    st.sidebar.title('HeartFrame')
     view = st.sidebar.radio('View', ['Explore', 'Compare'])
-    if st.sidebar.button('Reload data'):
-        st.cache_data.clear()
+    with st.sidebar.expander('Data settings'):
+        data_root = Path(st.text_input('ACDC data folder', str(ROOT / 'data'))).expanduser()
+        run_dir = Path(st.text_input('U-Net run folder',
+            str(ROOT / 'outputs' / 'unet' / DEFAULT_RUN))).expanduser()
+        if st.button('Reload data'):
+            st.cache_data.clear()
     try:
         if view == 'Compare':
-            st.caption('Notebook-03 phenotype comparison | Training patients | Expert masks')
+            st.subheader('Compare cardiac phenotypes')
+            st.caption('Training cohort · Expert segmentation')
             if not (data_root / 'training').is_dir():
                 st.info('Place training patients under the ACDC data folder to use Compare.')
             else:
@@ -271,11 +284,8 @@ def main():
             split = st.sidebar.selectbox('Dataset', ['testing', 'training'],
                 format_func=lambda x: 'Testing (final holdout)' if x == 'testing' else 'Training (includes validation)')
             data_dir = data_root / split
-            run_dir = Path(st.sidebar.text_input('U-Net run folder',
-                str(ROOT / 'outputs' / 'unet' / DEFAULT_RUN))).expanduser()
             output_split = 'test' if split == 'testing' else 'validation'
             predictions_root = str(run_dir / output_split / 'predictions')
-            st.sidebar.caption(f'Prediction folder: {predictions_root}')
             source = st.sidebar.radio('Segmentation', ['Expert', 'U-Net'])
             only_predicted = st.sidebar.checkbox('Only patients with both predictions', value=(source == 'U-Net'),
                                                  key=f'filter_{source}_{split}')
@@ -284,11 +294,11 @@ def main():
                 st.info(f'No patients found in {data_dir}. Choose another dataset or check the ACDC data folder.')
                 return
             available = [p for p in folders if all(f.is_file() for f in prediction_files(p, predictions_root))]
-            st.sidebar.caption(f'{len(available)} / {len(folders)} patients have ED and ES predictions.')
+            st.sidebar.caption(f'Model results available for {len(available)} of {len(folders)} patients.')
             if only_predicted:
                 folders = available
             if not folders:
-                st.info('No paired predictions found. Check the run folder and finish NB4 evaluation, or uncheck the prediction filter to view expert masks.')
+                st.info('No model results found. Check Data settings or turn off the prediction filter to explore expert segmentations.')
                 return
             folder = st.sidebar.selectbox('Patient', folders, format_func=lambda p: p.name,
                                           key=f'patient_{split}_{source}_{only_predicted}')
@@ -296,7 +306,9 @@ def main():
             code = info.get('Group', '').strip()
             st.caption(f'{folder.name} | {GROUPS.get(code, code)} | {source}')
             if source == 'U-Net':
-                st.info(f'Precomputed U-Net prediction | Run {run_dir.name} | {output_split} outputs. No training or live inference runs in this app.')
+                st.caption('Precomputed U-Net segmentation')
+                with st.expander('Model details'):
+                    st.caption(f'Run: {run_dir.name} · Evaluation split: {output_split}')
                 missing = [f.name for f in prediction_files(folder, predictions_root) if not f.is_file()]
                 if missing:
                     st.warning('Prediction unavailable: ' + ', '.join(missing) + '. Select Expert to view reference masks.')
@@ -304,7 +316,13 @@ def main():
             explore(folder, source, predictions_root, split)
     except (OSError, ValueError, KeyError, IndexError) as exc:
         st.error(f'Could not display this case: {exc}')
-    st.caption('Research and education prototype. Expert masks or precomputed U-Net segmentations; no diagnostic predictions. ACDC: Bernard et al., IEEE TMI (2018), doi:10.1109/TMI.2018.2837502.')
+    st.divider()
+    st.caption('HeartFrame · Cardiac MRI exploration')
+    with st.expander('About HeartFrame'):
+        st.write('Explore expert and U-Net segmentations, ventricular anatomy, and cardiac function.')
+        st.caption('Research and education prototype.')
+        st.markdown('ACDC dataset: Bernard et al., IEEE TMI (2018). '
+                    '[Dataset publication](https://doi.org/10.1109/TMI.2018.2837502)')
 
 
 if __name__ == '__main__':
