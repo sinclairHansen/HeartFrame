@@ -62,15 +62,7 @@ def load_patient(folder, source='Expert', predictions_root=''):
     return info, phases
 
 
-def metrics(phases):
-    rows = []
-    for name, label in [('LV', 3), ('RV', 1)]:
-        volumes = [float(np.count_nonzero(phases[p]['mask'] == label)
-                         * np.prod(phases[p]['spacing']) / 1000) for p in ('ED', 'ES')]
-        edv, esv = volumes
-        rows.append({'Ventricle': name, 'EDV (mL)': edv, 'ESV (mL)': esv,
-                     'SV (mL)': edv-esv, 'EF (%)': 100*(edv-esv)/edv if edv > 0 else np.nan})
-    return pd.DataFrame(rows).set_index('Ventricle')
+
 
 
 def prediction_files(folder, predictions_root):
@@ -122,25 +114,7 @@ def meshes(folder, source='Expert', predictions_root=''):
     return result, extent
 
 
-def comparison_table(reference, predicted):
-    ref, pred = metrics(reference), metrics(predicted)
-    return pd.DataFrame([
-        {'Ventricle': chamber, 'Measurement': metric,
-         'Expert': ref.loc[chamber, metric], 'U-Net': pred.loc[chamber, metric],
-         'U-Net minus expert': pred.loc[chamber, metric]-ref.loc[chamber, metric]}
-        for chamber in ref.index for metric in ref.columns
-    ])
 
-
-def dice_table(reference, predicted):
-    records = []
-    for phase in ('ED', 'ES'):
-        for structure, (label, _) in STRUCTURES.items():
-            ref, pred = reference[phase]['mask'] == label, predicted[phase]['mask'] == label
-            denominator = int(ref.sum()) + int(pred.sum())
-            records.append({'Phase': phase, 'Structure': structure,
-                            'Dice': 2*int((ref & pred).sum())/denominator if denominator else np.nan})
-    return pd.DataFrame(records)
 
 
 def trace(mesh, name):
@@ -264,7 +238,6 @@ def draw_slice(image, mask, z, spacing, overlay):
 
 def explore(folder, source='Expert', predictions_root='', split='training'):
     _, phases = load_patient(str(folder), source, predictions_root)
-    table = metrics(phases)
     st.subheader('See the contraction')
     selected = st.multiselect('3D structures', list(STRUCTURES), default=['LV cavity'],
                               help='Start with the LV cavity to compare filling and contraction.')
@@ -313,18 +286,6 @@ def explore(folder, source='Expert', predictions_root='', split='training'):
                 st.warning(f'{phase_name}: header spacing and affine axis lengths differ. '
                            'Display and volume calculations both use header spacing; verify the source geometry before interpreting absolute dimensions.')
         st.dataframe(pd.DataFrame(details), hide_index=True)
-    st.subheader('Cardiac function')
-    for name, row in table.iterrows():
-        st.markdown(f'**{name}**')
-        for col, (label, value) in zip(st.columns(4), row.items()):
-            col.metric(label, f'{value:.1f}' if np.isfinite(value) else 'Unavailable')
-        if row['EDV (mL)'] <= 0 or row['ESV (mL)'] <= 0 or row['SV (mL)'] < 0:
-            st.warning(f'{name}: missing or unusual chamber volumes. Review the selected masks.')
-    with st.expander('About these measurements'):
-        st.write('EDV: end-diastolic volume · ESV: end-systolic volume · SV: stroke volume · EF: ejection fraction.')
-        st.caption('Measurements summarize both phases. The display controls change the anatomy shown, not the measurements.')
-        if any(v['units'] == 'unknown' for v in phases.values()):
-            st.caption('ACDC spatial units are interpreted as millimeters where the image header does not specify units.')
 
     # MRI has its own full-width section, rather than competing with the 3D viewer.
     st.subheader('Inspect the MRI')
@@ -341,26 +302,6 @@ def explore(folder, source='Expert', predictions_root='', split='training'):
     with image_column:
         draw_slice(volume['image'], volume['mask'], z, volume['spacing'], overlay)
 
-    export = table.reset_index()
-    export.insert(0, 'Patient', folder.name)
-    export['Source'] = source
-    export['Dataset'] = split
-    export['Prediction folder'] = predictions_root if source == 'U-Net' else ''
-    st.download_button('Download patient measurements', export.to_csv(index=False),
-                       file_name=f'{folder.name}_{source}_metrics.csv', mime='text/csv')
-    if source == 'U-Net':
-        try:
-            _, reference = load_patient(str(folder), 'Expert')
-            differences = comparison_table(reference, phases)
-            st.subheader('Model performance')
-            st.caption('Differences: U-Net minus expert. EF differences are in percentage points.')
-            st.dataframe(differences.round(3), hide_index=True)
-            st.dataframe(dice_table(reference, phases).round(4), hide_index=True)
-            st.download_button('Download expert/model comparison', differences.to_csv(index=False),
-                               file_name=f'{folder.name}_expert_vs_unet.csv', mime='text/csv')
-        except (OSError, ValueError) as exc:
-            st.warning(f'Expert comparison unavailable: {exc}')
-
 
 def compare(data_dir):
     csv_path = ROOT / 'outputs' / 'representative_hearts.csv'
@@ -376,7 +317,7 @@ def compare(data_dir):
         # Tight framing uses only the displayed LV, with one center for ED and ES.
         mesh, extent = focus_meshes(raw_mesh, ['LV cavity'])
         prepared.append((row, mesh, extent))
-        records.append({'Group': row['Group'], 'Patient': row['Patient'], **metrics(phases).loc['LV'].to_dict()})
+        records.append({'Group': row['Group'], 'Patient': row['Patient']})
     if not prepared:
         st.info('No representative patients in the CSV.')
         return
@@ -392,8 +333,6 @@ def compare(data_dir):
         values = summary[summary['Patient'] == row['Patient']].iloc[0]
         with column:
             st.markdown(f"**{row['Group']}**")
-            st.metric('LV ejection fraction', f"{values['EF (%)']:.1f}%")
-            st.caption(f"{values['EDV (mL)']:.1f} mL filled → {values['ESV (mL)']:.1f} mL contracted")
     fig = contraction_figure([(row['Group'], mesh) for row, mesh, _ in chosen], ['LV cavity'],
                               mode, extent, angle, zoom, height, f'{focus}_{mode}_{revision}')
     show_figure(fig, 'phenotype_anatomy')
@@ -402,22 +341,7 @@ def compare(data_dir):
     else:
         st.caption('Shared physical scale and starting view across all phenotypes and phases.')
     st.caption('Use View angle or Reset rotations to restore matching views after rotating individual panels.')
-    # Connect visual contraction with the actual measured volume change.
-    chart = go.Figure()
-    for phase, field, color in [('Filled (ED)', 'EDV (mL)', '#80c9ed'),
-                                ('Contracted (ES)', 'ESV (mL)', '#ff7890')]:
-        chart.add_bar(name=phase, x=summary['Group'], y=summary[field], marker_color=color,
-                      hovertemplate='%{x}<br>%{y:.1f} mL<extra>%{fullData.name}</extra>')
-    chart.update_layout(title='Ventricular volume: filling to contraction', barmode='group',
-                         yaxis_title='LV volume (mL)', height=340, margin=dict(t=55, b=20),
-                         legend=dict(orientation='h', y=1.13))
-    st.plotly_chart(chart, use_container_width=True, config={'displaylogo': False})
-    with st.expander('Patient measurements and selection'):
-        st.dataframe(summary.round(2), hide_index=True)
-        st.write('Each case is closest to its group median left ventricular ejection fraction. '
-                 'A single translation is applied to both phases; no heart is independently resized.')
-        st.caption('Groups are ACDC reference labels. These are representative examples, not universal disease appearances. '
-                   'The cavity view does not show myocardial wall thickness.')
+
 
 
 def main():
@@ -425,7 +349,7 @@ def main():
     st.markdown('<style>.block-container {padding-top: 1.4rem; padding-bottom: 2rem;}</style>',
                 unsafe_allow_html=True)
     st.title('HeartFrame')
-    st.write('From cardiac MRI to 3D anatomy and function.')
+    st.write('Turn cardiac MRI slices into a 3D model of the heart.')
     st.sidebar.title('HeartFrame')
     view = st.sidebar.radio('View', ['Explore', 'Compare'])
     with st.sidebar.expander('Data settings'):
@@ -437,7 +361,11 @@ def main():
     try:
         if view == 'Compare':
             st.subheader('Compare cardiac phenotypes')
-            st.caption('Training cohort · Expert segmentation')
+            st.caption('For this last part of the project, I wanted to look into how different cardiac conditions impact how '
+            'the heart fills and contracts. The two conditions I looked at are dilated cardiomyopathy (DCM) and hypertrophic cardiomyopathy (HCM).' \
+            ' DCM is a condition where the left ventricle stretches thin and grows larger. HCM is when the heart muscle becomes thicker, ' \
+            'resulting in the heart pumping less blood due to the reduced space in the left ventricle. These conditions are harder to visualize '
+            'with 2D cardiac images, but can become quite clear when viewing how the heart behaves between end diastole and end systole in 3D, shown below.')
             if not (data_root / 'training').is_dir():
                 st.info('Place training patients under the ACDC data folder to use Compare.')
             else:
@@ -503,7 +431,7 @@ def main():
         st.write('Explore expert and U-Net segmentations, ventricular anatomy, and cardiac function.')
         st.caption('Research and education prototype.')
         st.markdown('ACDC dataset: Bernard et al., IEEE TMI (2018). '
-                    '[Dataset publication](https://doi.org/10.1109/TMI.2018.2837502)')
+                    '[Dataset publication](https:/ç/doi.org/10.1109/TMI.2018.2837502)')
 
 
 if __name__ == '__main__':
