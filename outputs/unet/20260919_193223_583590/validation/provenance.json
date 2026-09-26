@@ -1,0 +1,29 @@
+{
+  "checkpoint": "/Users/Sincl/hackmit/hackMIT/outputs/unet/20260919_193223_583590/best_unet.pt",
+  "epoch": 27,
+  "split": "validation",
+  "patients": [
+    "patient008",
+    "patient010",
+    "patient015",
+    "patient016",
+    "patient028",
+    "patient029",
+    "patient030",
+    "patient039",
+    "patient047",
+    "patient048",
+    "patient053",
+    "patient054",
+    "patient063",
+    "patient064",
+    "patient074",
+    "patient079",
+    "patient083",
+    "patient091",
+    "patient096",
+    "patient097"
+  ],
+  "postprocessing": "none",
+  "normalization": "nonzero_p1_p99_zscore_volume"
+}
