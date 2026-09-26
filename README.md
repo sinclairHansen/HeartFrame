@@ -1,6 +1,8 @@
 # HeartFrame
 
-Explore cardiac MRI slices, expert and U-Net segmentations, interactive 3D ventricular anatomy, and measurements of cardiac function in a local browser app.
+I built HeartFrame at HackMIT 2026 to explore how different cardiac conditions affect the way the heart fills and contracts. I trained a 2D U-Net in PyTorch to segment cardiac MRI slices, then built an interactive Streamlit app to bring those results into 3D. Users can explore ventricular anatomy, compare the model’s predictions with expert annotations, and see how ventricular volumes change between filling and contraction.
+
+The live app can be viewed here: [HeartFrame](https://heartframe.streamlit.app)
 
 
 ## Acknowledgments and dataset terms
