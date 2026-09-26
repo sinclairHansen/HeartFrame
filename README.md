@@ -4,6 +4,8 @@ I built HeartFrame at HackMIT 2026 to explore how different cardiac conditions a
 
 The live app can be viewed here: [HeartFrame](https://heartframe.streamlit.app)
 
+I hope to soon have a write-up on my website on everything I learned for the project and how it works!
+
 
 ## Acknowledgments and dataset terms
 
